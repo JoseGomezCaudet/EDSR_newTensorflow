@@ -4,7 +4,6 @@ import cv2
 import numpy as np
 import math
 import data_utils
-from skimage import io
 import edsr
 from PIL import Image
 from tensorflow.keras.optimizers import Adam
@@ -12,8 +11,8 @@ from tensorflow.keras.metrics import Mean
 import matplotlib.pyplot as plt
 
 
-class run:
-    def __init__(self, config, ckpt_path, scale, batch, epochs, B, F, lr, load_flag, meanBGR):
+class Run:
+    def __init__(self, config, ckpt_path, scale, batch, epochs, B, F, load_flag, meanBGR, lr=0.001, decay_steps=15000, decay_rate=0.95):
         self.config = config
         self.ckpt_path = ckpt_path
         self.scale = scale
@@ -25,6 +24,12 @@ class run:
         self.load_flag = load_flag
         self.mean = meanBGR
         self.model = None
+        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate=lr,
+            decay_steps=decay_steps,
+            decay_rate=decay_rate,
+            staircase=True)
+        self.optimizer = Adam(learning_rate=lr_schedule)
 
     def train(self, imagefolder, validfolder, edsrObj = None):
 
@@ -48,16 +53,18 @@ class run:
 
         # Edsr model
         print("\nRunning EDSR.")
-        edsrObj = edsr.Edsr(self.B, self.F, self.scale)
-        optimizer = Adam(learning_rate=self.lr)
+        if edsrObj == None:
+            edsrObj = edsr.Edsr(self.B, self.F, self.scale)
+        
 
         train_loss_metric = Mean()
+        val_loss_metric = Mean()
         val_psnr_metric = Mean()
         val_ssim_metric = Mean()
 
         checkpoint_dir = os.path.join(self.ckpt_path, "edsr_ckpt")
         checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
-        checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=edsrObj)
+        checkpoint = tf.train.Checkpoint(optimizer=self.optimizer, model=edsrObj)
 
         # Check for checkpoint directory and existence of checkpoint
         if os.path.exists(checkpoint_dir) and tf.train.latest_checkpoint(checkpoint_dir):
@@ -70,6 +77,8 @@ class run:
             print("No checkpoint found or 'load_flag' not set. Training from scratch.")
 
 
+        best_val_loss = float('inf')
+
         print("Training...")
         for epoch in range(1, self.epochs + 1):
             print(f"Start of Epoch {epoch}")
@@ -78,16 +87,43 @@ class run:
             for step, (LR, HR) in enumerate(train_dataset):
                 with tf.GradientTape() as tape:
                     out = edsrObj(LR, training=True)
-                    loss = edsrObj.loss(HR, out)
+                    loss = tf.keras.losses.mean_absolute_error(HR, out)  # L1 loss
+                    psnr = tf.image.psnr(HR, out, max_val=255.0)
+                    ssim = tf.image.ssim(HR, out, max_val=255.0)
                     grads = tape.gradient(loss, edsrObj.trainable_weights)
 
-                optimizer.apply_gradients(zip(grads, edsrObj.trainable_weights))
+                clipped_grads, _ = tf.clip_by_global_norm(grads, clip_norm=5.0)
+                self.optimizer.apply_gradients(zip(clipped_grads, edsrObj.trainable_weights))
 
                 train_loss_metric(loss)
+                epoch_train_loss = train_loss_metric.result().numpy()
 
                 if step % 1000 == 0:
-                    print(f"Step {step}: loss = {train_loss_metric.result().numpy()}, lr = {optimizer.learning_rate.numpy()}")
-                    train_loss_metric.reset_states()
+                    print(f"Step {step}: loss = {epoch_train_loss}, lr = {self.optimizer.learning_rate.numpy()}")
+                
+                 # Validation loop
+            for LR, HR in val_dataset:
+                val_output = edsrObj(LR, training=False)
+                val_loss = tf.keras.losses.mean_absolute_error(HR, val_output)  # L1 loss
+                val_psnr = tf.image.psnr(HR, val_output, max_val=255.0)
+                val_ssim = tf.image.ssim(HR, val_output, max_val=255.0)
+                val_loss_metric(val_loss)
+                val_psnr_metric(val_psnr)
+                val_ssim_metric(val_ssim)
+
+            epoch_val_loss = val_loss_metric.result().numpy()
+
+            print(f"Epoch {epoch}: Train Mean Loss = {epoch_train_loss}; Validation Mean Loss = {epoch_val_loss}")
+            print(f"Validation PSNR = {val_psnr_metric.result().numpy()}, Validation SSIM = {val_ssim_metric.result().numpy()}")
+            train_loss_metric.reset_states()
+            val_loss_metric.reset_states()
+            val_psnr_metric.reset_states()
+            val_ssim_metric.reset_states()
+
+            if epoch_val_loss < best_val_loss:
+                best_val_loss = epoch_val_loss
+                checkpoint.save(file_prefix=checkpoint_prefix)
+                print(f"Checkpoint guardado para la época {epoch} con pérdida de entrenamiento {epoch_train_loss} y pérdida de validación {epoch_val_loss}")
 
         self.model = edsrObj
 
@@ -189,9 +225,9 @@ class run:
         export_path = export_dir + export_file
         tf.saved_model.save(self.model, export_path)
 
-    def psnr(self, img1, img2):
+    """def psnr(self, img1, img2):
         mse = tf.reduce_mean(tf.square(img1 - img2))
         if mse == 0:
             return 100
         PIXEL_MAX = 255.0
-        return 20 * tf.math.log(PIXEL_MAX / tf.sqrt(mse)) / tf.math.log(10.0)
+        return 20 * tf.math.log(PIXEL_MAX / tf.sqrt(mse)) / tf.math.log(10.0)"""
