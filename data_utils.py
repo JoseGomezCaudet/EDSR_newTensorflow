@@ -91,7 +91,7 @@ def make_dataset(paths, scale, mean):
 
                 yield x, y
 
-def calcmean(imageFolder, bgr):
+def calcmean(imageFolder, bgr=True):
     """
     Calculates the mean of a dataset.
     """
@@ -104,10 +104,7 @@ def calcmean(imageFolder, bgr):
 
         image = np.asarray(Image.open(p))
 
-        mean_rgb = np.mean(image, axis=(0, 1), dtype=np.float64)
-
-        if im_counter % 50 == 0:
-            print("Total mean: {} | current mean: {}".format(total_mean, mean_rgb))
+        mean_rgb = np.mean(image, axis=(0, 1), dtype=np.float64)  
 
         total_mean += mean_rgb
         im_counter += 1

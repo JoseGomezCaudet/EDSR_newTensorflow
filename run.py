@@ -12,8 +12,7 @@ import matplotlib.pyplot as plt
 
 
 class Run:
-    def __init__(self, config, ckpt_path, scale, batch, epochs, B, F, load_flag, meanBGR, lr=0.001, decay_steps=15000, decay_rate=0.95):
-        self.config = config
+    def __init__(self, ckpt_path, scale, batch, epochs, load_flag, meanBGR, B=32, F=256,  lr=0.0001, decay_steps=15000, decay_rate=0.95):
         self.ckpt_path = ckpt_path
         self.scale = scale
         self.batch = batch
@@ -49,7 +48,7 @@ class Run:
             output_types=(tf.float32, tf.float32),
             output_shapes=(tf.TensorShape([None, None, 3]), tf.TensorShape([None, None, 3])),
             args=[val_image_paths, self.scale, self.mean]
-        ).padded_batch(1, padded_shapes=([None, None, 3], [None, None, 3]))
+        ).padded_batch(2, padded_shapes=([None, None, 3], [None, None, 3]))
 
         # Edsr model
         print("\nRunning EDSR.")
@@ -85,6 +84,8 @@ class Run:
 
             # Iterate over the batches of the dataset.
             for step, (LR, HR) in enumerate(train_dataset):
+                if step % 10 == 0:
+                    print(f"Step {step}")#, lr = {self.optimizer.learning_rate}")
                 with tf.GradientTape() as tape:
                     out = edsrObj(LR, training=True)
                     loss = tf.keras.losses.mean_absolute_error(HR, out)  # L1 loss
@@ -99,9 +100,12 @@ class Run:
                 epoch_train_loss = train_loss_metric.result().numpy()
 
                 if step % 1000 == 0:
-                    print(f"Step {step}: loss = {epoch_train_loss}, lr = {self.optimizer.learning_rate.numpy()}")
+                    print(f"Step {step}: loss = {epoch_train_loss}")#, lr = {self.optimizer.learning_rate}")
                 
                  # Validation loop
+                    
+            print(f"End of training epoch {epoch}, starting validation")
+
             for LR, HR in val_dataset:
                 val_output = edsrObj(LR, training=False)
                 val_loss = tf.keras.losses.mean_absolute_error(HR, val_output)  # L1 loss
