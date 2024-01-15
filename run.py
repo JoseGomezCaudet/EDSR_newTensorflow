@@ -84,7 +84,7 @@ class Run:
 
             # Iterate over the batches of the dataset.
             for step, (LR, HR) in enumerate(train_dataset):
-                if step % 10 == 0:
+                if step % 100 == 0:
                     print(f"Step {step}")#, lr = {self.optimizer.learning_rate}")
                 with tf.GradientTape() as tape:
                     out = edsrObj(LR, training=True)
